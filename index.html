@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FOC 磁场定向控制 · 交互式可视化</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --line:#2b3543;
+    --text:#e6edf3; --muted:#8b97a7; --accent:#58a6ff;
+    --pa:#ff5d5d; --pb:#36d399; --pc:#5d9bff;   /* a/b/c 相 */
+    --alpha:#ffb454; --beta:#c792ea;             /* αβ */
+    --d:#4dd0e1; --q:#ff79c6;                    /* dq */
+    --stator:#ff4d8d; --rotor:#4d9bff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    overflow:hidden;display:flex;flex-direction:column;
+  }
+  header{
+    padding:8px 16px;background:linear-gradient(90deg,#161b22,#1c2430);
+    border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex-shrink:0;
+  }
+  header h1{font-size:16px;font-weight:600;letter-spacing:.5px}
+  header .sub{font-size:12px;color:var(--muted)}
+  header .badge{margin-left:auto;font-size:12px;color:var(--muted)}
+  #main{flex:1;display:flex;min-height:0}
+  #view{flex:1;position:relative;min-width:0}
+  #view canvas{display:block}
+  #legend3d{
+    position:absolute;left:12px;top:12px;font-size:12px;line-height:1.7;
+    background:rgba(13,17,23,.6);padding:8px 11px;border-radius:8px;border:1px solid var(--line);
+    backdrop-filter:blur(4px);
+  }
+  #legend3d .row{display:flex;align-items:center;gap:7px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block;flex-shrink:0}
+  #hud{
+    position:absolute;right:12px;top:12px;font-size:12px;line-height:1.6;
+    background:rgba(13,17,23,.6);padding:8px 11px;border-radius:8px;border:1px solid var(--line);
+    backdrop-filter:blur(4px);min-width:150px;
+  }
+  #hud b{color:var(--accent)}
+  #side{
+    width:430px;flex-shrink:0;background:var(--panel);border-left:1px solid var(--line);
+    overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:14px;
+  }
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .card h2{font-size:13px;font-weight:600;margin-bottom:10px;color:var(--accent);
+           display:flex;align-items:center;gap:8px}
+  .card h2 .tag{font-size:10px;color:var(--muted);font-weight:400;margin-left:auto}
+  canvas.diag{width:100%;display:block;background:#0a0e14;border-radius:6px}
+  .ctl{margin-bottom:11px}
+  .ctl:last-child{margin-bottom:0}
+  .ctl label{font-size:12px;display:flex;justify-content:space-between;margin-bottom:5px;color:var(--muted)}
+  .ctl label span{color:var(--text);font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap}
+  button{
+    background:var(--panel);border:1px solid var(--line);color:var(--text);
+    padding:7px 12px;border-radius:7px;font-size:12px;cursor:pointer;transition:.15s;
+  }
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button.on{background:var(--accent);color:#0d1117;border-color:var(--accent);font-weight:600}
+  .pipe{font-size:11px;color:var(--muted);line-height:1.8}
+  .pipe code{color:var(--alpha);font-family:Consolas,monospace}
+  .pipe .stage{color:var(--text)}
+  .small{font-size:11px;color:var(--muted);line-height:1.6}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12px;font-variant-numeric:tabular-nums}
+  .kv .k{color:var(--muted)}
+  .kv .v{text-align:right}
+  details{font-size:12px;color:var(--muted)}
+  details summary{cursor:pointer;color:var(--accent);margin-bottom:6px}
+  details p{margin-bottom:6px;line-height:1.6}
+</style>
+</head>
+<body>
+<header>
+  <h1>FOC 磁场定向控制</h1>
+  <span class="sub">三相电流 → Clarke → Park → 控制 → 逆变 → 旋转磁场</span>
+  <span class="badge" id="modeBadge">速度闭环</span>
+</header>
+
+<div id="main">
+  <div id="view">
+    <div id="legend3d">
+      <div class="row"><span class="dot" style="background:var(--stator)"></span>定子合成电流矢量 (空间矢量)</div>
+      <div class="row"><span class="dot" style="background:#ff5566"></span>转子磁极 N(红)/S(蓝)，d 轴指向 N</div>
+      <div class="row"><span class="dot" style="background:var(--q)"></span>q 轴 (转矩方向)</div>
+      <div class="row">绕组按相染色 (亮度=电流大小)：<span class="dot" style="background:var(--pa)"></span>A<span class="dot" style="background:var(--pb)"></span>B<span class="dot" style="background:var(--pc)"></span>C，字母 ′ = 反向回线</div>
+      <div class="row">三相母线 (星形 Y)：U/V/W 进线 → 各相环 → 中性点 N</div>
+      <div class="row">电流环：两条边 ⊙(流出)/⊗(流入) + 端部箭头=缠绕方向，右手定则即得磁场</div>
+      <div class="row"><span class="dot" style="background:#ff5566"></span>定子磁场 N极(向内,射向转子) &nbsp;<span class="dot" style="background:#4d9bff"></span>S极(向外)，字母标在最强处</div>
+      <div class="row"><span class="dot" style="background:#ffd34d"></span>δ 夹角：黄=定子等效N，红=转子N，扇形=两者夹角(电角≈90°)</div>
+    </div>
+    <div id="hud">
+      <div>转速 ω<sub>m</sub>: <b id="hudSpeed">0</b> rpm</div>
+      <div>电角度 θ<sub>e</sub>: <b id="hudTheta">0</b>°</div>
+      <div>转矩 T<sub>e</sub>: <b id="hudTorque">0</b> N·m</div>
+      <div>负载角 δ: <b id="hudLoad">0</b>° (电)</div>
+      <div>电频率 f<sub>e</sub>: <b id="hudFe">0</b> Hz</div>
+    </div>
+  </div>
+
+  <div id="side">
+    <!-- 控制目标 -->
+    <div class="card">
+      <h2>① 控制指令 <span class="tag">你给定的目标</span></h2>
+      <div class="ctl">
+        <label>目标转速 ω* <span id="vSpeed">800 rpm</span></label>
+        <input type="range" id="sSpeed" min="-2000" max="2000" value="800" step="10"/>
+      </div>
+      <div class="ctl">
+        <label>负载转矩 T<sub>L</sub> <span id="vLoad">0.2 N·m</span></label>
+        <input type="range" id="sLoad" min="0" max="2" value="0.2" step="0.05"/>
+      </div>
+      <div class="ctl">
+        <label>励磁电流 i<sub>d</sub>* (通常=0) <span id="vId">0.0 A</span></label>
+        <input type="range" id="sId" min="-3" max="3" value="0" step="0.1"/>
+      </div>
+      <div class="ctl">
+        <label>极对数 p (转子磁极数 = 2p) <span id="vP">1</span></label>
+        <input type="range" id="sP" min="1" max="7" value="1" step="1"/>
+      </div>
+      <div class="btnrow">
+        <button id="bMode" class="on">速度闭环</button>
+        <button id="bAlign">磁场对齐演示</button>
+        <button id="bHouse">显示外壳</button>
+        <button id="bBus" class="on">三相母线</button>
+        <button id="bField" class="on">合成磁场</button>
+        <button id="bCur" class="on">电流方向</button>
+        <button id="bDelta" class="on">夹角δ</button>
+        <button id="bPause">暂停</button>
+      </div>
+      <p class="small" style="margin-top:8px">速度闭环：PI 调节器自动算出转矩电流 i<sub>q</sub>*。点“磁场对齐演示”可手动拨动定子矢量，直观感受 i<sub>q</sub> 与转矩的关系。</p>
+    </div>
+
+    <!-- 数据流水线 -->
+    <div class="card">
+      <h2>② 控制流水线 <span class="tag">实时数值</span></h2>
+      <div class="pipe">
+        <span class="stage">速度PI</span> → i<sub>q</sub>* = <code id="pIqRef">0.00</code> A，i<sub>d</sub>* = <code id="pIdRef">0.00</code> A<br/>
+        <span class="stage">逆Park (dq→αβ)</span> 用 θ<sub>e</sub> 旋转 → i<sub>α</sub>=<code id="pIa2">0</code>, i<sub>β</sub>=<code id="pIb2">0</code><br/>
+        <span class="stage">逆Clarke / SVPWM</span> → 三相占空比<br/>
+        <span class="stage">逆变器+电机</span> → 实际三相电流<br/>
+        <span class="stage">采样 + Clarke</span> (abc→αβ) →回到 i<sub>α</sub>i<sub>β</sub><br/>
+        <span class="stage">Park (αβ→dq)</span> 用 θ<sub>e</sub> → i<sub>d</sub>=<code id="pId">0</code>, i<sub>q</sub>=<code id="pIq">0</code> ↺反馈
+      </div>
+    </div>
+
+    <!-- 三相电流波形 -->
+    <div class="card">
+      <h2>③ 三相电流 i<sub>a</sub> i<sub>b</sub> i<sub>c</sub> <span class="tag">物理量 (静止)</span></h2>
+      <canvas id="cWave" class="diag" height="120"></canvas>
+      <p class="small">三个互差 120° 的交流量。频率随转速变化，幅值随负载变化——直接看很难判断该怎么控制。</p>
+    </div>
+
+    <!-- 矢量平面 -->
+    <div class="card">
+      <h2>④ 坐标变换矢量图 <span class="tag">同一个电流，三套坐标</span></h2>
+      <canvas id="cVec" class="diag" height="220"></canvas>
+      <div class="kv" style="margin-top:8px">
+        <div class="k" style="color:var(--alpha)">i<sub>α</sub></div><div class="v" id="kIa">0.00</div>
+        <div class="k" style="color:var(--beta)">i<sub>β</sub></div><div class="v" id="kIb">0.00</div>
+        <div class="k" style="color:var(--d)">i<sub>d</sub> (励磁)</div><div class="v" id="kId">0.00</div>
+        <div class="k" style="color:var(--q)">i<sub>q</sub> (转矩)</div><div class="v" id="kIq">0.00</div>
+      </div>
+      <p class="small" style="margin-top:8px"><b style="color:var(--d)">d/q 坐标系跟着转子一起转</b>，所以稳态下 i<sub>d</sub>、i<sub>q</sub> 变成了<b>直流量</b>——这就是 FOC 能像控制直流电机一样控制交流电机的关键。</p>
+    </div>
+
+    <!-- 原理说明 -->
+    <div class="card">
+      <details open>
+        <summary>FOC 到底在做什么？</summary>
+        <p><b>问题：</b>交流电机的三相电流是耦合的交流量，转矩和磁场纠缠在一起，没法直接控制。</p>
+        <p><b>思路：</b>站到<b>转子</b>的视角上看（旋转坐标系 d-q）。在这个视角里电流不再交变，分解成两个独立直流分量：</p>
+        <p>· <b style="color:var(--d)">i<sub>d</sub></b>：沿磁极方向 → 控制<b>磁场</b>（一般设 0，不做无用功）<br/>
+           · <b style="color:var(--q)">i<sub>q</sub></b>：垂直磁极方向 → 控制<b>转矩</b>（T<sub>e</sub> ∝ i<sub>q</sub>）</p>
+        <p><b>做法：</b>想要多大转矩就给多大 i<sub>q</sub>，PI 控制器算出 dq 电压，再经<b>逆 Park / 逆 Clarke / SVPWM</b> 变回三相去驱动。形象地说：始终让定子磁场<b>超前转子磁场 90°</b>，像永远使最大力气推磨。</p>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+/* =========================================================================
+   FOC 磁场定向控制可视化
+   - 3D：定子三相绕组 + 转子永磁体 + 定子电流空间矢量 + d/q 轴
+   - 2D：三相电流波形、Clarke/Park 矢量平面
+   - 物理：速度PI → iq* → 逆Park/Clarke → 电流 → 转矩 → 机械方程
+   ========================================================================= */
+'use strict';
+
+/* ---------- 全局状态 ---------- */
+const S = {
+  // 指令
+  speedRef: 800,      // rpm
+  loadTorque: 0.2,    // N·m
+  idRef: 0,           // A
+  mode: 'speed',      // 'speed' | 'align'
+  paused: false,
+  alignAngle: Math.PI/2, // 手动对齐演示：定子矢量相对转子 d 轴的角度
+
+  // 机械/电气
+  polePairs: 1,       // 极对数（=1 便于直观，电角=机械角）
+  thetaE: 0,          // 电角度 rad
+  omegaM: 0,          // 机械角速度 rad/s
+  J: 0.0008,          // 转动惯量
+  B: 0.0006,          // 粘滞摩擦
+  Kt: 0.6,            // 转矩常数 T = Kt * iq
+
+  // 电流（FOC 内部量）
+  idRefC: 0, iqRef: 0,    // 指令
+  id: 0, iq: 0,           // 实际（dq）
+  ialpha: 0, ibeta: 0,    // αβ
+  ia: 0, ib: 0, ic: 0,    // 三相
+  Te: 0,
+
+  // PI 控制器（速度环）
+  spInteg: 0, Kp: 0.02, Ki: 0.06, iqMax: 4,
+  // 电流环（简化为一阶跟随）
+  iLag: 0.02,
+};
+const RPM2RAD = Math.PI/30;
+
+/* =========================================================================
+   1. Three.js 3D 场景
+   ========================================================================= */
+const view = document.getElementById('view');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e14);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+camera.position.set(0, 6.5, 7.5);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+view.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0,0,0);
+
+scene.add(new THREE.AmbientLight(0xffffff,0.6));
+const dir = new THREE.DirectionalLight(0xffffff,0.9);
+dir.position.set(5,10,7); scene.add(dir);
+const dir2 = new THREE.DirectionalLight(0x88aaff,0.4);
+dir2.position.set(-6,4,-5); scene.add(dir2);
+
+const COL = {
+  pa:0xff5d5d, pb:0x36d399, pc:0x5d9bff,
+  stator:0xff4d8d, rotor:0x4d9bff, q:0xff79c6, d:0x4dd0e1,
+};
+
+/* ---- 几何尺寸参数 ---- */
+const DEPTH  = 1.6;     // 铁芯轴向长度
+const R_OUT  = 3.4;     // 定子外径
+const R_SLOT = 2.55;    // 槽底半径
+const R_TIP  = 1.98;    // 齿顶（定子内径，气隙外侧）
+const NS     = 12;      // 定子齿/槽数
+const FRONT  = DEPTH/2; // 前端面 z
+
+/* ---- 定子叠片铁芯：带齿的截面沿轴向拉伸（接近真实硅钢叠片）---- */
+const statorGroup = new THREE.Group();
+scene.add(statorGroup);
+
+function buildStatorShape(){
+  const shape = new THREE.Shape();
+  shape.absarc(0,0,R_OUT,0,Math.PI*2,false);   // 外圆
+  const hole = new THREE.Path();               // 内侧带齿轮廓
+  const pitch = 2*Math.PI/NS;
+  const tw = pitch*0.30;   // 齿顶半角
+  const sw = pitch*0.30;   // 槽口斜让
+  let first=true;
+  const add=(ang,r)=>{ const x=Math.cos(ang)*r,y=Math.sin(ang)*r;
+    if(first){hole.moveTo(x,y);first=false;}else hole.lineTo(x,y); };
+  for(let i=0;i<NS;i++){
+    const a=i*pitch;
+    add(a-tw, R_TIP);          // 齿顶左
+    add(a+tw, R_TIP);          // 齿顶右
+    add(a+sw, R_SLOT);         // 滑入槽底
+    add(a+pitch-sw, R_SLOT);   // 槽底另一侧
+  }
+  hole.closePath();
+  shape.holes.push(hole);
+  return shape;
+}
+const statorGeo = new THREE.ExtrudeGeometry(buildStatorShape(), {
+  depth:DEPTH, bevelEnabled:true, bevelThickness:0.04, bevelSize:0.04, bevelSegments:2, curveSegments:72
+});
+statorGeo.translate(0,0,-DEPTH/2);
+const steelMat = new THREE.MeshStandardMaterial({color:0x6a7280, metalness:0.55, roughness:0.5});
+const statorCore = new THREE.Mesh(statorGeo, steelMat);
+statorGroup.add(statorCore);
+
+// 外缘叠片纹理（示意硅钢片堆叠）
+for(let k=-2;k<=2;k++){
+  const lam=new THREE.Mesh(
+    new THREE.TorusGeometry(R_OUT+0.008,0.012,8,90),
+    new THREE.MeshStandardMaterial({color:0x4a525e, metalness:0.5, roughness:0.65})
+  );
+  lam.position.z=k*(DEPTH/5);
+  statorGroup.add(lam);
+}
+
+// 每个齿上缠铜绕组；双层 60° 相带排列 A A C' C' B B A' A' C C B' B'
+const phaseColor   = {a:COL.pa,b:COL.pb,c:COL.pc};
+const phaseOfTooth = ['a','a','c','c','b','b','a','a','c','c','b','b'];
+const signOfTooth  = [  1,  1, -1, -1,  1,  1, -1, -1,  1,  1, -1, -1 ];
+const coilMeshes = [];
+const R_MID = (R_TIP+R_SLOT)/2;
+const pitch = 2*Math.PI/NS;
+// 铜色按相染色：铜基色与相色混合，使每相绕组始终可辨
+const tintCopper = ph => new THREE.Color(0xb87333).lerp(new THREE.Color(phaseColor[ph]), 0.6);
+const hex = ph => '#'+phaseColor[ph].toString(16).padStart(6,'0');
+const labelText = (ph,sign) => ph.toUpperCase() + (sign<0 ? '′' : '');  // A / A′(反向回线)
+// 相别字母标签（精灵，始终面向相机；贴在定子上不随转子转）
+function makePhaseLabel(){
+  const cv=document.createElement('canvas'); cv.width=cv.height=72;
+  const tex=new THREE.CanvasTexture(cv);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex, depthTest:false}));
+  sp.scale.set(0.55,0.55,0.55); sp.renderOrder=1001;
+  sp.userData={ctx:cv.getContext('2d'), tex};
+  statorGroup.add(sp);
+  return sp;
+}
+function setPhaseLabel(sp,text,color){
+  const {ctx,tex}=sp.userData;
+  ctx.clearRect(0,0,72,72);
+  ctx.fillStyle=color; ctx.font='bold 44px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(text,36,38); tex.needsUpdate=true;
+}
+// 电流方向符号：⊙=流出纸面(朝观察者)，⊗=流入纸面
+const curGroup = new THREE.Group(); statorGroup.add(curGroup);
+function makeCurSym(){
+  const cv=document.createElement('canvas'); cv.width=cv.height=64;
+  const tex=new THREE.CanvasTexture(cv);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:false}));
+  sp.scale.set(0.5,0.5,0.5); sp.renderOrder=1002;
+  sp.userData={ctx:cv.getContext('2d'), tex};
+  curGroup.add(sp); return sp;
+}
+function drawCurSym(sp,out,color,alpha){
+  const {ctx,tex}=sp.userData; ctx.clearRect(0,0,64,64);
+  ctx.globalAlpha=Math.max(0.12,alpha); ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=5;
+  ctx.beginPath(); ctx.arc(32,32,19,0,7); ctx.stroke();
+  if(out){ ctx.beginPath(); ctx.arc(32,32,6,0,7); ctx.fill(); }          // ⊙ 流出
+  else { ctx.beginPath(); ctx.moveTo(19,19); ctx.lineTo(45,45);
+         ctx.moveTo(45,19); ctx.lineTo(19,45); ctx.stroke(); }           // ⊗ 流入
+  ctx.globalAlpha=1; tex.needsUpdate=true;
+}
+const DELTA = pitch*0.42;   // 线圈两条边相对齿中心的角偏移（落在两侧槽内）
+function curSymCached(sp,out,color,alpha){
+  const bucket=Math.round(alpha*4), ud=sp.userData;
+  if(ud.last===undefined||ud.last.out!==out||ud.last.bucket!==bucket||ud.last.color!==color){
+    drawCurSym(sp,out,color,alpha); ud.last={out,bucket,color};
+  }
+}
+// 端部连接弧：跨过齿顶把线圈两条边连起来
+function makeEndTurn(a){
+  const arc=new THREE.Mesh(
+    new THREE.TorusGeometry(R_MID,0.03,6,22, 2*DELTA),
+    new THREE.MeshBasicMaterial({transparent:true, depthTest:false}));
+  arc.rotation.z=a-DELTA; arc.position.z=FRONT+0.5; arc.renderOrder=1000;
+  curGroup.add(arc); return arc;
+}
+// 端部电流方向箭头（指示缠绕/环流方向）
+function makeHead(){
+  const h=new THREE.Mesh(new THREE.ConeGeometry(0.085,0.26,10),
+    new THREE.MeshBasicMaterial({transparent:true, depthTest:false}));
+  h.renderOrder=1001; curGroup.add(h); return h;
+}
+// 一个齿的"电流环"：两条边符号 + 端部弧 + 方向箭头
+function makeCirc(a){
+  const symLow=makeCurSym(), symUp=makeCurSym();
+  symLow.scale.set(0.42,0.42,0.42); symUp.scale.set(0.42,0.42,0.42);
+  symLow.position.set(Math.cos(a-DELTA)*R_MID, Math.sin(a-DELTA)*R_MID, FRONT+0.55);
+  symUp .position.set(Math.cos(a+DELTA)*R_MID, Math.sin(a+DELTA)*R_MID, FRONT+0.55);
+  return {symLow, symUp, arc:makeEndTurn(a), head:makeHead()};
+}
+// 每帧更新电流环：v≥0 → a+δ 边⊙流出、a−δ 边⊗流入，电流顺时针环绕(右手定则→磁通向外=定子S)
+function updateCirc(cv,a,v,ph){
+  const ccw=v<0, alpha=Math.min(1,0.25+Math.abs(v)*0.55), css=hex(ph), col=phaseColor[ph];
+  curSymCached(cv.symLow, ccw, css, alpha);   // a−δ 边
+  curSymCached(cv.symUp, !ccw, css, alpha);   // a+δ 边（方向相反）
+  cv.head.position.set(Math.cos(a)*R_MID, Math.sin(a)*R_MID, FRONT+0.5);
+  cv.head.rotation.z = ccw ? a : a-Math.PI;   // 逆时针 / 顺时针
+  cv.head.material.color.setHex(col); cv.head.material.opacity=Math.max(0.2,alpha);
+  cv.arc.material.color.setHex(col);  cv.arc.material.opacity=Math.max(0.18,alpha*0.8);
+}
+for(let i=0;i<NS;i++){
+  const a = i*pitch, ph = phaseOfTooth[i], sg = signOfTooth[i];
+  const g = new THREE.Group();
+  g.rotation.z = a;
+  // 绕组线圈：环绕齿身，端部从前后端面鼓出（像真实端部绕组）
+  const mat = new THREE.MeshStandardMaterial({
+    color:tintCopper(ph), metalness:0.7, roughness:0.35, emissive:phaseColor[ph], emissiveIntensity:0.0});
+  const coil = new THREE.Mesh(new THREE.TorusGeometry(0.60,0.16,14,30), mat);
+  coil.rotation.y = Math.PI/2;     // 把环轴转到径向
+  coil.position.set(R_MID,0,0);
+  g.add(coil);
+  statorGroup.add(g);
+  // 字母标签浮在该齿外侧
+  const label = makePhaseLabel();
+  label.position.set(Math.cos(a)*(R_OUT+0.55), Math.sin(a)*(R_OUT+0.55), FRONT+0.35);
+  setPhaseLabel(label, labelText(ph,sg), hex(ph));
+  // 该齿的电流环：两条边 ⊙/⊗ + 端部连接 + 缠绕方向箭头
+  const circ = makeCirc(a);
+  coilMeshes.push({mesh:coil, phase:ph, sign:sg, label, circ, a});
+}
+
+// 按极对数重排绕组：每个齿归属电气上最贴近的相轴，绕组花样会出现 p 个周期
+function rebuildWinding(p){
+  const axes={a:0, b:2*Math.PI/3, c:4*Math.PI/3};
+  for(let i=0;i<NS;i++){
+    const aElec = p*i*pitch;
+    let best='a', bestMag=-1, bestSign=1;
+    for(const ph in axes){
+      const proj=Math.cos(aElec-axes[ph]);
+      if(Math.abs(proj)>bestMag){ bestMag=Math.abs(proj); best=ph; bestSign=proj>=0?1:-1; }
+    }
+    const c=coilMeshes[i], sg=bestSign;
+    c.phase=best; c.sign=sg;
+    c.mesh.material.color.copy(tintCopper(best));
+    c.mesh.material.emissive.setHex(phaseColor[best]);
+    setPhaseLabel(c.label, labelText(best,sg), hex(best));
+  }
+}
+
+/* ---- 转子：钢芯 + 表贴永磁体（1 对极） ---- */
+const rotorGroup = new THREE.Group();
+scene.add(rotorGroup);
+const R_ROT = 1.78, R_CORE = 1.45;
+// 钢芯
+const rotorCore = new THREE.Mesh(
+  new THREE.CylinderGeometry(R_CORE,R_CORE,DEPTH*0.99,48),
+  new THREE.MeshStandardMaterial({color:0x3a4350, metalness:0.7, roughness:0.4})
+);
+rotorCore.rotation.x = Math.PI/2;
+rotorGroup.add(rotorCore);
+// 表贴磁极：环扇形（在 XY 平面内，沿轴向拉伸）
+function magnetMesh(a0,a1,color,emis){
+  const s=new THREE.Shape();
+  s.absarc(0,0,R_ROT, a0,a1,false);
+  s.absarc(0,0,R_CORE,a1,a0,true);
+  const geo=new THREE.ExtrudeGeometry(s,{depth:DEPTH*0.96,bevelEnabled:false,curveSegments:48});
+  geo.translate(0,0,-DEPTH*0.96/2);
+  return new THREE.Mesh(geo,new THREE.MeshStandardMaterial(
+    {color,emissive:emis,emissiveIntensity:0.35,metalness:0.4,roughness:0.45}));
+}
+// 磁极字母标签（红 N / 蓝 S），返回未挂载的精灵
+function makePoleLabel(text,color){
+  const cv=document.createElement('canvas'); cv.width=cv.height=128;
+  const c=cv.getContext('2d');
+  c.fillStyle=color; c.font='bold 96px sans-serif';
+  c.textAlign='center'; c.textBaseline='middle';
+  c.fillText(text,64,70);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv), depthTest:false}));
+  sp.scale.set(0.6,0.6,0.6); sp.renderOrder=1003;
+  return sp;
+}
+// 磁极按极对数生成：2p 个交替 N/S，第一个 N 极中心对准 +X (d 轴参考)
+let magnetMeshes = [], magnetLabels = [];
+function rebuildRotorMagnets(p){
+  magnetMeshes.forEach(m=>{ rotorGroup.remove(m); m.geometry.dispose(); m.material.dispose(); });
+  magnetLabels.forEach(l=>{ rotorGroup.remove(l); l.material.map.dispose(); l.material.dispose(); });
+  magnetMeshes=[]; magnetLabels=[];
+  const span=Math.PI/p;                 // 每个磁极的角宽
+  const rl=(R_CORE+R_ROT)/2;
+  for(let k=0;k<2*p;k++){
+    const c=k*span, isN=(k%2===0);
+    // 红=N 蓝=S
+    const m=magnetMesh(c-span/2, c+span/2, isN?0xff5566:0x4d9bff, isN?0x551015:0x0a2255);
+    rotorGroup.add(m); magnetMeshes.push(m);
+    // 磁极 N/S 标签（随转子旋转，方便与定子磁场对照）
+    const lab=makePoleLabel(isN?'N':'S', isN?'#ff5566':'#4d9bff');
+    lab.position.set(Math.cos(c)*rl, Math.sin(c)*rl, DEPTH*0.96/2+0.18);
+    rotorGroup.add(lab); magnetLabels.push(lab);
+  }
+}
+rebuildRotorMagnets(S.polePairs);
+// 转轴（贯穿并从前端伸出）
+const shaft = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.22,0.22,DEPTH+3.4,24),
+  new THREE.MeshStandardMaterial({color:0xc2c8d2, metalness:0.9, roughness:0.2})
+);
+shaft.rotation.x = Math.PI/2; shaft.position.z = 0.8;
+rotorGroup.add(shaft);
+// 端面标记条（随转子旋转，兼作 d 轴位置指示）
+const mark = new THREE.Mesh(
+  new THREE.BoxGeometry(0.5,0.16,0.06),
+  new THREE.MeshStandardMaterial({color:0xffffff, emissive:0x444444})
+);
+mark.position.set((R_CORE+R_ROT)/2, 0, DEPTH*0.96/2+0.04);
+rotorGroup.add(mark);
+
+/* ---- 外壳（可切换显示）：机壳 + 散热片 + 端盖 + 底座 + 接线盒 ---- */
+const housing = new THREE.Group();
+housing.visible = false;
+scene.add(housing);
+const caseMat = new THREE.MeshStandardMaterial({color:0x2b3a4a, metalness:0.6, roughness:0.45});
+const finMat  = new THREE.MeshStandardMaterial({color:0x35485a, metalness:0.6, roughness:0.55});
+// 机壳筒
+const shell = new THREE.Mesh(
+  new THREE.CylinderGeometry(R_OUT+0.25,R_OUT+0.25,DEPTH+0.6,64,1,true), caseMat);
+shell.rotation.x = Math.PI/2; housing.add(shell);
+// 散热片
+for(let i=0;i<28;i++){
+  const a=i/28*Math.PI*2;
+  const fin=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.55,DEPTH+0.5), finMat);
+  fin.position.set(Math.cos(a)*(R_OUT+0.52), Math.sin(a)*(R_OUT+0.52), 0);
+  fin.rotation.z=a; housing.add(fin);
+}
+// 端盖
+function endBell(z){
+  const b=new THREE.Mesh(new THREE.CylinderGeometry(R_OUT+0.28,R_OUT+0.08,0.35,64), caseMat);
+  b.rotation.x=Math.PI/2; b.position.z=z; return b;
+}
+housing.add(endBell((DEPTH+0.6)/2)); housing.add(endBell(-(DEPTH+0.6)/2));
+// 轴承凸台
+const boss=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,0.4,32), caseMat);
+boss.rotation.x=Math.PI/2; boss.position.z=(DEPTH+0.6)/2+0.2; housing.add(boss);
+// 底座
+const foot=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.4,DEPTH+0.9), caseMat);
+foot.position.set(0,-(R_OUT+0.6),0); housing.add(foot);
+// 接线盒
+const jbox=new THREE.Mesh(new THREE.BoxGeometry(1.3,0.85,1.5), caseMat);
+jbox.position.set(0,(R_OUT+0.7),0); housing.add(jbox);
+
+/* ---- 矢量箭头工具 ---- */
+function makeArrow(color, len, headFrac=0.22, rad=0.06){
+  const g = new THREE.Group();
+  const shaftLen = len*(1-headFrac);
+  const mat = new THREE.MeshStandardMaterial({color, emissive:color, emissiveIntensity:0.9, depthTest:false});
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(rad,rad,shaftLen,14), mat);
+  body.position.y = shaftLen/2;
+  body.renderOrder = 999;
+  g.add(body);
+  const head = new THREE.Mesh(new THREE.ConeGeometry(rad*2.6, len*headFrac, 18), mat);
+  head.position.y = shaftLen + len*headFrac/2;
+  head.renderOrder = 999;
+  g.add(head);
+  g.userData.baseLen = len;
+  return g;
+}
+// 箭头默认指向 +Y，我们让它们躺在 XY 平面里：角度 a 时指向 (cos,sin)
+function aimArrow(arrow, angle, length){
+  arrow.rotation.z = angle - Math.PI/2; // 因为初始指向 +Y
+  const s = length/arrow.userData.baseLen;
+  arrow.scale.set(1, Math.max(s,0.001), 1);
+}
+
+// 定子电流空间矢量（品红）——浮在前端面之上，便于观察
+const statorVec = makeArrow(COL.stator, 3.0, 0.22, 0.08);
+statorVec.position.z = FRONT + 0.6;
+scene.add(statorVec);
+// 转子 d 轴（青，较粗）、q 轴（粉）
+const dAxis = makeArrow(COL.d, 2.6, 0.22, 0.10);
+const qAxis = makeArrow(COL.q, 2.1, 0.22, 0.08);
+dAxis.position.z = FRONT + 0.55;
+qAxis.position.z = FRONT + 0.5;
+scene.add(dAxis); scene.add(qAxis);
+
+// d / q 轴端面文字标签（始终面向相机）
+function makeLabel(text, color){
+  const cv=document.createElement('canvas'); cv.width=cv.height=128;
+  const c=cv.getContext('2d');
+  c.fillStyle=color; c.font='bold 80px sans-serif';
+  c.textAlign='center'; c.textBaseline='middle';
+  c.fillText(text,64,68);
+  const tex=new THREE.CanvasTexture(cv);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,depthTest:false}));
+  sp.scale.set(0.7,0.7,0.7); sp.renderOrder=1000;
+  scene.add(sp); return sp;
+}
+const dLabel=makeLabel('d','#4dd0e1');
+const qLabel=makeLabel('q','#ff79c6');
+
+/* ---- 两点之间画一根圆柱（用于母线/引线） ---- */
+function cyl(x1,y1,z1,x2,y2,z2,rad,color){
+  const a=new THREE.Vector3(x1,y1,z1), b=new THREE.Vector3(x2,y2,z2);
+  const d=new THREE.Vector3().subVectors(b,a), len=d.length();
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(rad,rad,len,8),
+    new THREE.MeshBasicMaterial({color, depthTest:false}));
+  m.renderOrder=900;
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), d.normalize());
+  return m;
+}
+
+/* ---- 三相母线（星形 Y 接法）：母线环 + 线圈引线 + 中性点 N + 进线端子 ---- */
+const busGroup = new THREE.Group(); scene.add(busGroup);
+const termAngle = {a:Math.PI*1.22, b:Math.PI*1.0, c:Math.PI*0.78}; // 底部三个进线端
+function rebuildBusbars(){
+  while(busGroup.children.length){ const c=busGroup.children.pop();
+    if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose(); }
+  const ringR={a:R_OUT+0.85, b:R_OUT+1.15, c:R_OUT+1.45};
+  const z=FRONT+0.5, phases=['a','b','c'];
+  // 三条相母线环（同相线圈都接到自己这条环上）
+  phases.forEach(ph=>{
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(ringR[ph],0.045,8,90),
+      new THREE.MeshBasicMaterial({color:phaseColor[ph], depthTest:false}));
+    ring.position.z=z; ring.renderOrder=900; busGroup.add(ring);
+  });
+  // 每个线圈 → 对应相母线的引线
+  coilMeshes.forEach((c,i)=>{
+    const a=i*pitch, ph=c.phase, r0=R_OUT+0.05, r1=ringR[ph];
+    busGroup.add(cyl(Math.cos(a)*r0,Math.sin(a)*r0,z, Math.cos(a)*r1,Math.sin(a)*r1,z, 0.03, phaseColor[ph]));
+  });
+  // 星形中性点 N：三条母线在顶部汇到一点
+  const Nx=0, Ny=R_OUT+2.0;
+  phases.forEach(ph=>{
+    busGroup.add(cyl(0*ringR[ph],ringR[ph],z, Nx,Ny,z, 0.03, phaseColor[ph]));
+  });
+  const node=new THREE.Mesh(new THREE.SphereGeometry(0.18,16,16),
+    new THREE.MeshBasicMaterial({color:0xe6edf3, depthTest:false}));
+  node.position.set(Nx,Ny,z); node.renderOrder=901; busGroup.add(node);
+  // 三相进线端子（来自逆变器 U/V/W）
+  phases.forEach(ph=>{
+    const ang=termAngle[ph], r1=ringR[ph], r2=ringR.c+0.9;
+    busGroup.add(cyl(Math.cos(ang)*r1,Math.sin(ang)*r1,z, Math.cos(ang)*r2,Math.sin(ang)*r2,z, 0.035, phaseColor[ph]));
+    const t=new THREE.Mesh(new THREE.SphereGeometry(0.16,12,12),
+      new THREE.MeshBasicMaterial({color:phaseColor[ph], depthTest:false}));
+    t.position.set(Math.cos(ang)*r2,Math.sin(ang)*r2,z); t.renderOrder=901; busGroup.add(t);
+  });
+}
+const nLabel=makeLabel('N','#e6edf3'); nLabel.position.set(0, R_OUT+2.0, FRONT+0.9);
+const uLabel=makeLabel('U','#ff5d5d'); const vLabel=makeLabel('V','#36d399'); const wLabel=makeLabel('W','#5d9bff');
+[['a',uLabel],['b',vLabel],['c',wLabel]].forEach(([ph,lb])=>{
+  const ang=termAngle[ph], r=R_OUT+1.45+1.2;
+  lb.position.set(Math.cos(ang)*r, Math.sin(ang)*r, FRONT+0.9);
+});
+
+/* ---- 气隙旋转磁场：一圈径向箭头（红=N向外，蓝=S向内）---- */
+const fieldGroup = new THREE.Group(); scene.add(fieldGroup);
+const fieldArrows = [];
+const NF = 24;
+for(let k=0;k<NF;k++){
+  const cone=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.42,8),
+    new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.8}));
+  fieldGroup.add(cone); fieldArrows.push(cone);
+}
+// 最强等效 N / S 位置标签（随磁场移动）
+const fieldNTag=makeLabel('N','#ff5566'); fieldGroup.add(fieldNTag); fieldNTag.scale.set(0.6,0.6,0.6);
+const fieldSTag=makeLabel('S','#4d9bff'); fieldGroup.add(fieldSTag); fieldSTag.scale.set(0.6,0.6,0.6);
+
+// δ 夹角可视化：扇形 + 两条指针(转子N / 定子等效N) + 角度文字
+const deltaGroup = new THREE.Group(); scene.add(deltaGroup);
+const deltaWedge = new THREE.Mesh(
+  new THREE.CircleGeometry(1.15, 40, 0, Math.PI/2),
+  new THREE.MeshBasicMaterial({color:0xffd34d, transparent:true, opacity:0.22, side:THREE.DoubleSide, depthTest:false}));
+deltaWedge.renderOrder=940; deltaGroup.add(deltaWedge);
+function makeSpoke(L,color){
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(0.028,0.028,L,8),
+    new THREE.MeshBasicMaterial({color, depthTest:false}));
+  m.renderOrder=945; m.userData.L=L; deltaGroup.add(m); return m;
+}
+const spokeRotor  = makeSpoke(1.66, 0xff5566);   // 指向转子 N（红）
+const spokeStator = makeSpoke(1.92, 0xffd34d);   // 指向定子等效 N（黄）
+function updateSpokeT(m,a){
+  const L=m.userData.L;
+  m.position.set(Math.cos(a)*L/2, Math.sin(a)*L/2, FRONT+0.6);
+  m.rotation.z=a-Math.PI/2;
+}
+const deltaLabel=(function(){
+  const cv=document.createElement('canvas'); cv.width=256; cv.height=72;
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv), depthTest:false, transparent:true}));
+  sp.scale.set(1.7,0.48,1); sp.renderOrder=1006;
+  sp.userData={ctx:cv.getContext('2d'), tex:sp.material.map};
+  deltaGroup.add(sp); return sp;
+})();
+function setDeltaLabel(dm,de){
+  const {ctx,tex}=deltaLabel.userData;
+  ctx.clearRect(0,0,256,72);
+  ctx.fillStyle='#ffd34d'; ctx.font='bold 33px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(`δ=${dm}° (电${de}°)`, 128, 40); tex.needsUpdate=true;
+}
+
+rebuildBusbars();
+
+/* ---- 旋转磁场轨迹粒子（定子矢量尖端拖尾） ---- */
+const trailN = 60;
+const trailGeo = new THREE.BufferGeometry();
+const trailPos = new Float32Array(trailN*3);
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos,3));
+const trailMat = new THREE.PointsMaterial({color:COL.stator, size:0.12, transparent:true, opacity:0.5});
+const trail = new THREE.Points(trailGeo, trailMat);
+scene.add(trail);
+let trailIdx = 0;
+
+function resize3D(){
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w,h,false);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize3D);
+
+/* =========================================================================
+   2. 2D 图表（波形 + 矢量平面）
+   ========================================================================= */
+const waveCv = document.getElementById('cWave');
+const waveCtx = waveCv.getContext('2d');
+const vecCv = document.getElementById('cVec');
+const vecCtx = vecCv.getContext('2d');
+const waveHist = []; // {a,b,c}
+const WMAX = 240;
+
+function setupCanvas(cv){
+  const r = cv.getBoundingClientRect();
+  cv.width = r.width*devicePixelRatio;
+  cv.height = cv.height*devicePixelRatio; // height attr fixed
+  return devicePixelRatio;
+}
+
+function drawWave(){
+  const ctx = waveCtx, cv = waveCv;
+  const W = cv.width, H = cv.height, dpr = devicePixelRatio;
+  ctx.clearRect(0,0,W,H);
+  // 中线
+  ctx.strokeStyle='#1c2430'; ctx.lineWidth=1*dpr;
+  ctx.beginPath(); ctx.moveTo(0,H/2); ctx.lineTo(W,H/2); ctx.stroke();
+  const amp = H*0.42, scale = 1/4.2; // 电流 ~±4A 映射
+  const cols=['--pa','--pb','--pc'].map(v=>getComputedStyle(document.documentElement).getPropertyValue(v));
+  const keys=['a','b','c'];
+  keys.forEach((k,ki)=>{
+    ctx.strokeStyle=cols[ki].trim(); ctx.lineWidth=2*dpr; ctx.beginPath();
+    for(let i=0;i<waveHist.length;i++){
+      const x = (i/(WMAX-1))*W;
+      const y = H/2 - waveHist[i][k]*scale*amp;
+      i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+    }
+    ctx.stroke();
+  });
+}
+
+function drawVec(){
+  const ctx = vecCtx, cv = vecCv;
+  const W = cv.width, H = cv.height, dpr=devicePixelRatio;
+  const cx=W/2, cy=H/2, R=Math.min(W,H)*0.40;
+  ctx.clearRect(0,0,W,H);
+  const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  // 网格圆
+  ctx.strokeStyle='#1c2430'; ctx.lineWidth=1*dpr;
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,7); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,R*0.5,0,7); ctx.stroke();
+  // αβ 静止轴
+  ctx.strokeStyle='#2b3543'; ctx.lineWidth=1*dpr;
+  ctx.beginPath(); ctx.moveTo(cx-R,cy); ctx.lineTo(cx+R,cy); ctx.stroke(); // α
+  ctx.beginPath(); ctx.moveTo(cx,cy+R); ctx.lineTo(cx,cy-R); ctx.stroke(); // β
+  ctx.fillStyle=css('--alpha'); ctx.font=`${12*dpr}px sans-serif`;
+  ctx.fillText('α', cx+R-12*dpr, cy-6*dpr);
+  ctx.fillStyle=css('--beta'); ctx.fillText('β', cx+6*dpr, cy-R+14*dpr);
+
+  const sc = R/4.2; // 电流标度
+  const arrow=(ang,mag,color,lw)=>{
+    const ex=cx+Math.cos(ang)*mag*sc, ey=cy-Math.sin(ang)*mag*sc;
+    ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=lw*dpr;
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(ex,ey); ctx.stroke();
+    const a2=Math.atan2(ey-cy,ex-cx), hl=8*dpr;
+    ctx.beginPath(); ctx.moveTo(ex,ey);
+    ctx.lineTo(ex-hl*Math.cos(a2-0.4),ey-hl*Math.sin(a2-0.4));
+    ctx.lineTo(ex-hl*Math.cos(a2+0.4),ey-hl*Math.sin(a2+0.4));
+    ctx.closePath(); ctx.fill();
+    return [ex,ey];
+  };
+  // 旋转的 d/q 坐标轴（虚线）
+  const te=S.thetaE;
+  ctx.setLineDash([4*dpr,4*dpr]); ctx.lineWidth=1.5*dpr;
+  ctx.strokeStyle=css('--d');
+  ctx.beginPath(); ctx.moveTo(cx-Math.cos(te)*R,cy+Math.sin(te)*R);
+  ctx.lineTo(cx+Math.cos(te)*R,cy-Math.sin(te)*R); ctx.stroke();
+  ctx.strokeStyle=css('--q');
+  ctx.beginPath(); ctx.moveTo(cx-Math.cos(te+Math.PI/2)*R,cy+Math.sin(te+Math.PI/2)*R);
+  ctx.lineTo(cx+Math.cos(te+Math.PI/2)*R,cy-Math.sin(te+Math.PI/2)*R); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle=css('--d'); ctx.fillText('d', cx+Math.cos(te)*R*0.9, cy-Math.sin(te)*R*0.9);
+  ctx.fillStyle=css('--q'); ctx.fillText('q', cx+Math.cos(te+Math.PI/2)*R*0.8, cy-Math.sin(te+Math.PI/2)*R*0.8);
+
+  // αβ 分量（橙/紫，画在轴上）
+  arrow(0, S.ialpha, css('--alpha'),2);
+  arrow(Math.PI/2, S.ibeta, css('--beta'),2);
+  // 合成定子电流矢量（品红，粗）
+  const mag=Math.hypot(S.ialpha,S.ibeta), ang=Math.atan2(S.ibeta,S.ialpha);
+  arrow(ang, mag, css('--stator'),3.5);
+  // d/q 分量沿旋转轴
+  arrow(te, S.id, css('--d'),2);
+  arrow(te+Math.PI/2, S.iq, css('--q'),2);
+}
+
+/* =========================================================================
+   3. UI 绑定
+   ========================================================================= */
+const $=id=>document.getElementById(id);
+function bind(slider,val,fmt,key,mul=1){
+  const s=$(slider);
+  const upd=()=>{ S[key]=parseFloat(s.value)*mul; $(val).textContent=fmt(parseFloat(s.value)); };
+  s.addEventListener('input',upd); upd();
+}
+bind('sSpeed','vSpeed',v=>`${v} rpm`,'speedRef');
+bind('sLoad','vLoad',v=>`${v.toFixed(2)} N·m`,'loadTorque');
+bind('sId','vId',v=>`${v.toFixed(1)} A`,'idRef');
+
+$('sP').addEventListener('input',e=>{
+  S.polePairs=parseInt(e.target.value);
+  $('vP').textContent=S.polePairs;
+  rebuildRotorMagnets(S.polePairs);
+  rebuildWinding(S.polePairs);
+  rebuildBusbars();
+});
+$('bMode').addEventListener('click',()=>{
+  S.mode = S.mode==='speed'?'align':'speed';
+  const on=S.mode==='speed';
+  $('bMode').textContent = on?'速度闭环':'手动对齐';
+  $('bMode').classList.toggle('on',on);
+  $('modeBadge').textContent = on?'速度闭环':'手动对齐演示';
+});
+$('bAlign').addEventListener('click',()=>{
+  // 切到手动并把矢量摆到 90°（最大转矩）
+  S.mode='align'; S.alignAngle=Math.PI/2;
+  $('bMode').textContent='手动对齐'; $('bMode').classList.remove('on');
+  $('modeBadge').textContent='手动对齐演示';
+});
+$('bHouse').addEventListener('click',()=>{
+  housing.visible=!housing.visible;
+  $('bHouse').textContent=housing.visible?'隐藏外壳':'显示外壳';
+  $('bHouse').classList.toggle('on',housing.visible);
+});
+$('bBus').addEventListener('click',()=>{
+  const v=!busGroup.visible; busGroup.visible=v;
+  nLabel.visible=uLabel.visible=vLabel.visible=wLabel.visible=v;
+  $('bBus').classList.toggle('on',v);
+});
+$('bField').addEventListener('click',()=>{
+  fieldGroup.visible=!fieldGroup.visible;
+  $('bField').classList.toggle('on',fieldGroup.visible);
+});
+$('bCur').addEventListener('click',()=>{
+  curGroup.visible=!curGroup.visible;
+  $('bCur').classList.toggle('on',curGroup.visible);
+});
+$('bDelta').addEventListener('click',()=>{
+  deltaGroup.visible=!deltaGroup.visible;
+  $('bDelta').classList.toggle('on',deltaGroup.visible);
+});
+$('bPause').addEventListener('click',()=>{
+  S.paused=!S.paused;
+  $('bPause').textContent=S.paused?'继续':'暂停';
+  $('bPause').classList.toggle('on',S.paused);
+});
+// 手动模式下用滚轮/拖动改变对齐角
+view.addEventListener('wheel',e=>{
+  if(S.mode==='align'){ S.alignAngle+=Math.sign(e.deltaY)*0.06; e.preventDefault(); }
+},{passive:false});
+
+/* =========================================================================
+   4. 物理 + 控制 仿真步进
+   ========================================================================= */
+function clarke(a,b,c){ // 幅值不变变换
+  const al = (2/3)*(a - 0.5*b - 0.5*c);
+  const be = (2/3)*((Math.sqrt(3)/2)*(b-c));
+  return [al,be];
+}
+function park(al,be,th){
+  return [ al*Math.cos(th)+be*Math.sin(th),  -al*Math.sin(th)+be*Math.cos(th) ];
+}
+function invPark(d,q,th){
+  return [ d*Math.cos(th)-q*Math.sin(th),  d*Math.sin(th)+q*Math.cos(th) ];
+}
+function invClarke(al,be){
+  const a = al;
+  const b = -0.5*al + (Math.sqrt(3)/2)*be;
+  const c = -0.5*al - (Math.sqrt(3)/2)*be;
+  return [a,b,c];
+}
+
+function step(dt){
+  const p=S.polePairs;
+
+  if(S.mode==='speed'){
+    /* --- 速度环 PI → iq* --- */
+    const wRef = S.speedRef*RPM2RAD;
+    const err = wRef - S.omegaM;
+    S.spInteg += err*dt;
+    // 抗积分饱和
+    let iqRef = S.Kp*err*100 + S.Ki*S.spInteg*100;
+    iqRef = Math.max(-S.iqMax, Math.min(S.iqMax, iqRef));
+    if(Math.abs(iqRef)>=S.iqMax) S.spInteg -= err*dt; // clamp
+    S.iqRef = iqRef;
+    S.idRefC = S.idRef;
+
+    /* --- 电流环（简化一阶跟随：实际 dq 电流追指令）--- */
+    const a = Math.min(1, dt/S.iLag);
+    S.id += (S.idRefC - S.id)*a;
+    S.iq += (S.iqRef  - S.iq)*a;
+
+    /* --- 逆 Park / 逆 Clarke 得到三相（用于显示与“真实”电流）--- */
+    [S.ialpha,S.ibeta] = invPark(S.id,S.iq,S.thetaE);
+    [S.ia,S.ib,S.ic] = invClarke(S.ialpha,S.ibeta);
+
+    /* --- 转矩与机械方程 --- */
+    S.Te = S.Kt*S.iq;
+    const loadSign = (S.omegaM>=0?1:-1);
+    const domega = (S.Te - S.B*S.omegaM - S.loadTorque*loadSign)/S.J;
+    S.omegaM += domega*dt;
+    S.thetaE += p*S.omegaM*dt;
+
+  } else {
+    /* --- 手动对齐演示：直接给定子矢量一个相对 d 轴的角 alignAngle --- */
+    // 转子缓慢自转，便于观察“磁场跟随”
+    S.omegaM += ( (S.speedRef*RPM2RAD) - S.omegaM )*Math.min(1,dt/0.3);
+    S.thetaE += p*S.omegaM*dt;
+    const mag = 3.0; // 固定幅值
+    const vecAngle = S.thetaE + S.alignAngle;
+    S.ialpha = mag*Math.cos(vecAngle);
+    S.ibeta  = mag*Math.sin(vecAngle);
+    [S.id,S.iq] = park(S.ialpha,S.ibeta,S.thetaE);
+    [S.ia,S.ib,S.ic] = invClarke(S.ialpha,S.ibeta);
+    S.Te = S.Kt*S.iq;
+  }
+
+  // 归一化电角度显示
+  S.thetaE = ((S.thetaE%(2*Math.PI))+2*Math.PI)%(2*Math.PI);
+
+  // 记录波形
+  waveHist.push({a:S.ia,b:S.ib,c:S.ic});
+  if(waveHist.length>WMAX) waveHist.shift();
+}
+
+/* =========================================================================
+   5. 渲染更新
+   ========================================================================= */
+function update3D(){
+  // 转子姿态：机械角 = thetaE/p
+  const thetaM = S.thetaE/S.polePairs;
+  rotorGroup.rotation.z = thetaM;
+
+  // d 轴 = 转子磁极方向 = thetaM；q 轴 = +90°
+  aimArrow(dAxis, thetaM, 2.6);
+  aimArrow(qAxis, thetaM+Math.PI/2, 2.1);
+  // 标签放到各轴尖端
+  dLabel.position.set(Math.cos(thetaM)*3.0, Math.sin(thetaM)*3.0, FRONT+0.6);
+  qLabel.position.set(Math.cos(thetaM+Math.PI/2)*2.5, Math.sin(thetaM+Math.PI/2)*2.5, FRONT+0.6);
+
+  // 定子电流空间矢量：画在机械空间，需超前转子磁极 90° 电角 = (90/p)° 机械角
+  const mag=Math.hypot(S.id,S.iq);
+  const loadElec=Math.atan2(S.iq,S.id);           // 电流矢量相对 d 轴的电角
+  const angMech=thetaM + loadElec/S.polePairs;     // 折算到机械角度
+  aimArrow(statorVec, angMech, Math.max(0.3, mag*0.7+0.3));
+
+  // 各齿瞬时绕组电流 = 相电流 × 该齿绕向符号；磁场由此插值得到，与电流环完全一致
+  const cur={a:S.ia,b:S.ib,c:S.ic};
+  const teethV=coilMeshes.map(c=>cur[c.phase]*c.sign);
+
+  // 气隙旋转磁场：直接由各齿绕组电流插值（与电流环/右手定则自洽）
+  // 绕向约定：齿电流为正 → 磁通【向外】= 定子 S 极(蓝)；电流为负 → 向内 = N 极(红)
+  let maxB=-1e9, minB=1e9, kMax=0, kMin=0;
+  for(let k=0;k<NF;k++){
+    const th=k/NF*Math.PI*2, t=th/pitch;
+    const i0=((Math.floor(t)%NS)+NS)%NS, i1=(i0+1)%NS, fr=t-Math.floor(t);
+    const B=teethV[i0]*(1-fr)+teethV[i1]*fr;
+    if(B>maxB){maxB=B;kMax=k;}  if(B<minB){minB=B;kMin=k;}
+    const out=B>=0, cone=fieldArrows[k], rg=R_TIP-0.12;   // 正电流→磁通向外(S)
+    cone.position.set(Math.cos(th)*rg, Math.sin(th)*rg, FRONT+0.1);
+    cone.rotation.z=(out?th:th+Math.PI)-Math.PI/2;         // S 向外 / N 向内(指向转子)
+    const mm=Math.abs(B)/4;
+    cone.scale.set(1, 0.08 + Math.min(1.3,mm)*1.8, 1);
+    cone.material.color.setHex(out?0x4d9bff:0xff5566);     // 外=S蓝 内=N红
+    cone.material.opacity=0.5 + 0.5*Math.min(1,mm);
+  }
+  // 等效 N = 磁通最向内处(minB)；等效 S = 最向外处(maxB)
+  const rTag=R_TIP-0.12;
+  const aNs=kMin/NF*Math.PI*2, aSs=kMax/NF*Math.PI*2;
+  fieldNTag.position.set(Math.cos(aNs)*rTag, Math.sin(aNs)*rTag, FRONT+0.4);
+  fieldSTag.position.set(Math.cos(aSs)*rTag, Math.sin(aSs)*rTag, FRONT+0.4);
+
+  // δ 夹角：定子等效 N(aN) 相对 转子 N(thetaM) 的夹角（机械角，×p 为电角）
+  const dRel=Math.atan2(Math.sin(aNs-thetaM), Math.cos(aNs-thetaM));
+  const startA = dRel>=0?thetaM:aNs, lenA=Math.max(0.001,Math.abs(dRel));
+  deltaWedge.geometry.dispose();
+  deltaWedge.geometry=new THREE.CircleGeometry(1.15, 40, startA, lenA);
+  deltaWedge.position.z=FRONT+0.55;
+  updateSpokeT(spokeRotor, thetaM);
+  updateSpokeT(spokeStator, aNs);
+  const midA=startA+lenA/2;
+  deltaLabel.position.set(Math.cos(midA)*1.45, Math.sin(midA)*1.45, FRONT+0.7);
+  const dd=Math.abs(Math.round(dRel*180/Math.PI));
+  setDeltaLabel(dd, dd*S.polePairs);
+
+  // 拖尾
+  trailPos[trailIdx*3]   = Math.cos(angMech)*Math.min(mag*0.7+0.3,3.2);
+  trailPos[trailIdx*3+1] = Math.sin(angMech)*Math.min(mag*0.7+0.3,3.2);
+  trailPos[trailIdx*3+2] = FRONT + 0.35;
+  trailIdx=(trailIdx+1)%trailN;
+  trailGeo.attributes.position.needsUpdate=true;
+
+  // 线圈发光强度随相电流 + 更新每个齿的电流环
+  coilMeshes.forEach(c=>{
+    const v=cur[c.phase]*c.sign;
+    c.mesh.material.emissiveIntensity=0.05+Math.min(1.4,Math.abs(v)*0.4);
+    updateCirc(c.circ, c.a, v, c.phase);
+  });
+}
+
+function updateHUD(){
+  $('hudSpeed').textContent=(S.omegaM/RPM2RAD).toFixed(0);
+  $('hudTheta').textContent=(S.thetaE*180/Math.PI).toFixed(0);
+  $('hudTorque').textContent=S.Te.toFixed(2);
+  // 负载角 δ：电流矢量超前转子 d 轴的电角度（FOC 维持 ≈90°）
+  let delta=Math.atan2(S.iq,S.id)*180/Math.PI;
+  delta=((delta%360)+360)%360; if(delta>180)delta-=360;
+  $('hudLoad').textContent=delta.toFixed(0);
+  // 电频率 = p × 机械频率
+  $('hudFe').textContent=Math.abs(S.polePairs*S.omegaM/(2*Math.PI)).toFixed(1);
+
+  // 流水线 & kv
+  $('pIqRef').textContent=S.iqRef?S.iqRef.toFixed(2):S.iq.toFixed(2);
+  $('pIdRef').textContent=S.idRefC.toFixed(2);
+  $('pIa2').textContent=S.ialpha.toFixed(2);
+  $('pIb2').textContent=S.ibeta.toFixed(2);
+  $('pId').textContent=S.id.toFixed(2);
+  $('pIq').textContent=S.iq.toFixed(2);
+  $('kIa').textContent=S.ialpha.toFixed(2);
+  $('kIb').textContent=S.ibeta.toFixed(2);
+  $('kId').textContent=S.id.toFixed(2);
+  $('kIq').textContent=S.iq.toFixed(2);
+}
+
+/* =========================================================================
+   6. 主循环
+   ========================================================================= */
+let last=performance.now();
+let waveSetup=false;
+function loop(now){
+  const dtReal=Math.min(0.05,(now-last)/1000); last=now;
+  if(!S.paused){
+    // 用较小子步保证仿真稳定
+    const sub=6, h=dtReal/sub;
+    for(let i=0;i<sub;i++) step(h);
+  }
+  update3D();
+  updateHUD();
+
+  if(!waveSetup){ setupCanvas(waveCv); setupCanvas(vecCv); waveSetup=true; }
+  drawWave(); drawVec();
+
+  controls.update();
+  renderer.render(scene,camera);
+  requestAnimationFrame(loop);
+}
+
+// 初始化尺寸
+function initSizes(){
+  resize3D();
+  setupCanvas(waveCv); setupCanvas(vecCv);
+}
+window.addEventListener('resize',()=>{ initSizes(); });
+// 等布局完成
+requestAnimationFrame(()=>{ initSizes(); requestAnimationFrame(loop); });
+</script>
+</body>
+</html>
