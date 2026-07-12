@@ -79,7 +79,7 @@
 <body>
 <header>
   <h1>FOC 磁场定向控制</h1>
-  <span class="sub">三相电流 → Clarke → Park → 控制 → 逆变 → 旋转磁场</span>
+  <span class="sub">三相电流 → Clarke → Park → 控制 → SVPWM → 逆变 → 旋转磁场</span>
   <span class="badge" id="modeBadge">速度闭环</span>
 </header>
 
@@ -142,10 +142,11 @@
       <h2>② 控制流水线 <span class="tag">实时数值</span></h2>
       <div class="pipe">
         <span class="stage">速度PI</span> → i<sub>q</sub>* = <code id="pIqRef">0.00</code> A，i<sub>d</sub>* = <code id="pIdRef">0.00</code> A<br/>
-        <span class="stage">逆Park (dq→αβ)</span> 用 θ<sub>e</sub> 旋转 → i<sub>α</sub>=<code id="pIa2">0</code>, i<sub>β</sub>=<code id="pIb2">0</code><br/>
-        <span class="stage">逆Clarke / SVPWM</span> → 三相占空比<br/>
-        <span class="stage">逆变器+电机</span> → 实际三相电流<br/>
-        <span class="stage">采样 + Clarke</span> (abc→αβ) →回到 i<sub>α</sub>i<sub>β</sub><br/>
+        <span class="stage">电流环</span> → 电压指令 U<sub>d</sub>=<code id="pVd">0</code>, U<sub>q</sub>=<code id="pVq">0</code> V<br/>
+        <span class="stage">逆Park (dq→αβ)</span> 用 θ<sub>e</sub> 旋转 → U<sub>α</sub>=<code id="pVa2">0</code>, U<sub>β</sub>=<code id="pVb2">0</code> V<br/>
+        <span class="stage">SVPWM</span> → 占空比 <code id="pDa">50</code>/<code id="pDb">50</code>/<code id="pDc">50</code> %，扇区 <code id="pSec">1</code><br/>
+        <span class="stage">逆变桥</span> 载波比较 → 6 路门极信号 → 实际三相电流<br/>
+        <span class="stage">采样 + Clarke</span> (abc→αβ) → i<sub>α</sub>=<code id="pIa2">0</code>, i<sub>β</sub>=<code id="pIb2">0</code><br/>
         <span class="stage">Park (αβ→dq)</span> 用 θ<sub>e</sub> → i<sub>d</sub>=<code id="pId">0</code>, i<sub>q</sub>=<code id="pIq">0</code> ↺反馈
       </div>
     </div>
@@ -170,6 +171,43 @@
       <p class="small" style="margin-top:8px"><b style="color:var(--d)">d/q 坐标系跟着转子一起转</b>，所以稳态下 i<sub>d</sub>、i<sub>q</sub> 变成了<b>直流量</b>——这就是 FOC 能像控制直流电机一样控制交流电机的关键。</p>
     </div>
 
+    <!-- SVPWM 空间电压矢量 -->
+    <div class="card">
+      <h2>⑤ SVPWM 空间电压矢量 <span class="tag">8 种开关状态逼近任意电压</span></h2>
+      <canvas id="cHex" class="diag" height="250"></canvas>
+      <div class="kv" style="margin-top:8px">
+        <div class="k">扇区 / 调制比 m</div><div class="v" id="kSec">1 / 0.00</div>
+        <div class="k" style="color:var(--alpha)">T<sub>1</sub>（矢量 U<sub>k</sub>）</div><div class="v" id="kT1">0 %</div>
+        <div class="k" style="color:var(--beta)">T<sub>2</sub>（矢量 U<sub>k+1</sub>）</div><div class="v" id="kT2">0 %</div>
+        <div class="k">T<sub>0</sub>（零矢量 000/111）</div><div class="v" id="kT0">100 %</div>
+      </div>
+      <div class="ctl" style="margin-top:10px">
+        <label>直流母线电压 V<sub>dc</sub>（调低体验过调制） <span id="vVdc">160 V</span></label>
+        <input type="range" id="sVdc" min="40" max="250" value="160" step="5"/>
+      </div>
+      <p class="small">逆变器 3 个桥臂只有 2³=8 种开关组合：6 个非零矢量（六边形顶点，括号内为 A/B/C 上管状态）+ 2 个零矢量（中心）。想要的电压 U<sub>ref</sub>（品红）一般不在顶点方向上，于是在每个开关周期里按 <b style="color:var(--alpha)">T<sub>1</sub></b>:<b style="color:var(--beta)">T<sub>2</sub></b> 分时输出相邻两个基本矢量、剩余时间补零矢量——<b>平均电压恰好等于 U<sub>ref</sub></b>（伏秒平衡）。黄点 = 当前载波时刻实际输出的开关状态，它在顶点间跳变，但平均值沿圆轨迹旋转。虚线圆 = 线性调制极限（m=1）。</p>
+    </div>
+
+    <!-- PWM 载波比较 -->
+    <div class="card">
+      <h2>⑥ PWM 生成：载波比较 <span class="tag">慢放一个开关周期</span></h2>
+      <canvas id="cDuty" class="diag" height="100"></canvas>
+      <p class="small" style="margin:6px 0 10px">三相占空比波形：<b>马鞍波</b> = 正弦 + 零序注入（等价于 SVPWM 的零矢量对称分配），电压利用率比纯正弦调制高 15%。</p>
+      <canvas id="cPwm" class="diag" height="210"></canvas>
+      <div class="ctl" style="margin-top:10px">
+        <label>载波慢放周期（真实为 μs 级） <span id="vCarT">6 s</span></label>
+        <input type="range" id="sCarT" min="2" max="15" value="6" step="1"/>
+      </div>
+      <p class="small">占空比与三角载波比较：<b>d &gt; 载波 → 该相上管导通</b>。中心对齐产生七段式对称序列（如 000→100→110→111→110→100→000），每周期每管只开关一次，开关损耗最小、谐波集中在载波频率附近。真实系统载波 10~20 kHz，这里放慢了几万倍；黄色光标与 ⑤⑦ 两图实时联动。</p>
+    </div>
+
+    <!-- 三相逆变桥 -->
+    <div class="card">
+      <h2>⑦ 三相逆变桥 <span class="tag">6 个开关的实时状态</span></h2>
+      <canvas id="cBridge" class="diag" height="180"></canvas>
+      <p class="small">同一桥臂上下管<b>互补导通</b>（点亮 = 导通，永不同时开，防止直通短路）。相线箭头 = 当前相电流方向，亮度随电流大小。PWM 的本质：靠这 6 个开关高速通断，把恒定的直流母线电压“斩”成平均值为三相正弦的电压加到绕组上——绕组电感把开关脉冲滤成平滑电流。</p>
+    </div>
+
     <!-- 原理说明 -->
     <div class="card">
       <details open>
@@ -179,6 +217,17 @@
         <p>· <b style="color:var(--d)">i<sub>d</sub></b>：沿磁极方向 → 控制<b>磁场</b>（一般设 0，不做无用功）<br/>
            · <b style="color:var(--q)">i<sub>q</sub></b>：垂直磁极方向 → 控制<b>转矩</b>（T<sub>e</sub> ∝ i<sub>q</sub>）</p>
         <p><b>做法：</b>想要多大转矩就给多大 i<sub>q</sub>，PI 控制器算出 dq 电压，再经<b>逆 Park / 逆 Clarke / SVPWM</b> 变回三相去驱动。形象地说：始终让定子磁场<b>超前转子磁场 90°</b>，像永远使最大力气推磨。</p>
+      </details>
+    </div>
+
+    <!-- PWM 原理说明 -->
+    <div class="card">
+      <details>
+        <summary>PWM / SVPWM 到底在做什么？</summary>
+        <p><b>问题：</b>功率管只能全开或全关，逆变器每相输出只有“接正母线”或“接负母线”两个电平，给不出连续变化的正弦电压。</p>
+        <p><b>PWM（脉宽调制）：</b>用远高于基波的频率（10~20 kHz）快速通断，靠调节每个周期内的<b>导通时间比例（占空比）</b>来调节平均电压。电机绕组是大电感，是天然的低通滤波器——它“感受”到的就是平均电压，电流因此接近正弦。</p>
+        <p><b>SVPWM（空间矢量 PWM）：</b>把 8 种开关组合看成 8 个空间电压矢量（⑤ 的六边形）。任意参考电压 = 相邻两个基本矢量 × 各自作用时间 + 零矢量补齐周期（伏秒平衡）。等价于给三相正弦叠加零序分量（⑥ 的马鞍波），直流电压利用率提高 15%，谐波性能也更好。</p>
+        <p><b>完整链路：</b>电流环 PI 给出 U<sub>d</sub>、U<sub>q</sub> → 逆 Park 得 U<sub>α</sub>、U<sub>β</sub> → SVPWM 算三相占空比 → 与三角载波比较得 6 路互补门极信号 → 逆变桥（⑦）输出 → 电机。</p>
       </details>
     </div>
   </div>
@@ -224,6 +273,18 @@ const S = {
   spInteg: 0, Kp: 0.02, Ki: 0.06, iqMax: 4,
   // 电流环（简化为一阶跟随）
   iLag: 0.02,
+
+  // PWM / 逆变器
+  Vdc: 160,             // 直流母线电压
+  Rw: 0.8, Lw: 0.0035,  // 定子电阻 / 电感（用于反算电压指令）
+  vd: 0, vq: 0,         // dq 电压指令
+  valpha: 0, vbeta: 0,  // αβ 电压
+  m: 0,                 // 调制比（线性区上限 1）
+  sector: 0,            // SVPWM 扇区 0..5
+  T1: 0, T2: 0, T0: 1,  // 一个开关周期内的时间分配（归一化）
+  da: 0.5, db: 0.5, dc: 0.5,   // 三相占空比
+  carrierPhase: 0, carrierT: 6, // 载波慢放：一个开关周期演示 carrierT 秒
+  Sa: false, Sb: false, Sc: false, // 三相上管开关状态
 };
 const RPM2RAD = Math.PI/30;
 
@@ -711,10 +772,24 @@ const vecCtx = vecCv.getContext('2d');
 const waveHist = []; // {a,b,c}
 const WMAX = 240;
 
+// PWM 相关画布
+const hexCv = document.getElementById('cHex');
+const hexCtx = hexCv.getContext('2d');
+const dutyCv = document.getElementById('cDuty');
+const dutyCtx = dutyCv.getContext('2d');
+const pwmCv = document.getElementById('cPwm');
+const pwmCtx = pwmCv.getContext('2d');
+const brCv = document.getElementById('cBridge');
+const brCtx = brCv.getContext('2d');
+const dutyHist = []; // {a,b,c} 占空比历史
+
+const cssVar = v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
 function setupCanvas(cv){
   const r = cv.getBoundingClientRect();
+  if(!cv.dataset.h) cv.dataset.h = cv.getAttribute('height'); // 记住 CSS 像素基准高度
   cv.width = r.width*devicePixelRatio;
-  cv.height = cv.height*devicePixelRatio; // height attr fixed
+  cv.height = parseFloat(cv.dataset.h)*devicePixelRatio;
   return devicePixelRatio;
 }
 
@@ -794,6 +869,317 @@ function drawVec(){
 }
 
 /* =========================================================================
+   2.5 PWM / SVPWM：计算 + 六边形 + 载波比较 + 逆变桥
+   ========================================================================= */
+// 6 个基本电压矢量的开关状态 (Sa Sb Sc)，U1=100 在 0°，逆时针每 60° 一个
+const SVBITS = ['100','110','010','011','001','101'];
+
+function computePWM(dt){
+  const p = S.polePairs, we = p*S.omegaM;
+  const lambda = S.Kt/(1.5*p);   // 永磁磁链：与 Kt=1.5·p·λ 自洽
+  // 稳态电机方程反算 dq 电压指令（本仿真电流环理想化，电压仅用于 PWM 演示）
+  S.vd = S.Rw*S.id - we*S.Lw*S.iq;
+  S.vq = S.Rw*S.iq + we*(S.Lw*S.id + lambda);
+  [S.valpha, S.vbeta] = invPark(S.vd, S.vq, S.thetaE);
+
+  const Vmag = Math.hypot(S.valpha, S.vbeta);
+  S.m = Vmag/(S.Vdc/Math.sqrt(3));         // 调制比：m=1 即线性调制极限（六边形内切圆）
+
+  // 扇区判断 + T1/T2/T0（归一化到一个开关周期）
+  let ang = Math.atan2(S.vbeta, S.valpha);
+  if(ang<0) ang += 2*Math.PI;
+  S.sector = Math.min(5, Math.floor(ang/(Math.PI/3)));
+  const thIn = ang - S.sector*Math.PI/3;   // 在扇区内的角度 0..60°
+  const mEff = Math.min(S.m, 1);           // 过调制时按限幅显示
+  S.T1 = mEff*Math.sin(Math.PI/3 - thIn);
+  S.T2 = mEff*Math.sin(thIn);
+  S.T0 = Math.max(0, 1 - S.T1 - S.T2);
+
+  // 占空比：min-max 零序注入（与七段式 SVPWM 等价，得到马鞍波）
+  let [va,vb,vc] = invClarke(S.valpha, S.vbeta);
+  const vcom = -(Math.max(va,vb,vc)+Math.min(va,vb,vc))/2;
+  const c01 = x=>Math.max(0, Math.min(1, x));
+  S.da = c01(0.5 + (va+vcom)/S.Vdc);
+  S.db = c01(0.5 + (vb+vcom)/S.Vdc);
+  S.dc = c01(0.5 + (vc+vcom)/S.Vdc);
+
+  // 慢放载波：三角波 tri = |1-2t|，d > tri → 上管开（中心对齐）
+  S.carrierPhase = (S.carrierPhase + dt/S.carrierT)%1;
+  const tri = Math.abs(1 - 2*S.carrierPhase);
+  S.Sa = S.da>tri; S.Sb = S.db>tri; S.Sc = S.dc>tri;
+
+  dutyHist.push({a:S.da, b:S.db, c:S.dc});
+  if(dutyHist.length>WMAX) dutyHist.shift();
+}
+
+/* ---- ⑤ 空间矢量六边形 ---- */
+function drawHex(){
+  const ctx=hexCtx, cv=hexCv, W=cv.width, H=cv.height, dpr=devicePixelRatio;
+  ctx.clearRect(0,0,W,H);
+  const cx=W*0.46, cy=H*0.47, R=Math.min(W*0.34, H*0.40);
+  const P=(a,r)=>[cx+Math.cos(a)*r, cy-Math.sin(a)*r];
+
+  // 当前扇区高亮
+  ctx.fillStyle='rgba(88,166,255,0.10)';
+  ctx.beginPath(); ctx.moveTo(cx,cy);
+  ctx.lineTo(...P(S.sector*Math.PI/3,R));
+  ctx.lineTo(...P((S.sector+1)*Math.PI/3,R));
+  ctx.closePath(); ctx.fill();
+
+  // 六边形边界 + 线性调制极限圆（内切圆）
+  ctx.strokeStyle='#2b3543'; ctx.lineWidth=1.5*dpr;
+  ctx.beginPath();
+  for(let k=0;k<=6;k++){ const [x,y]=P(k*Math.PI/3,R); k?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+  ctx.stroke();
+  ctx.setLineDash([3*dpr,4*dpr]);
+  ctx.beginPath(); ctx.arc(cx,cy,R*Math.sqrt(3)/2,0,7); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 6 个基本矢量与标签
+  ctx.font=`${10*dpr}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(let k=0;k<6;k++){
+    const act=(k===S.sector || k===(S.sector+1)%6);
+    ctx.strokeStyle=act?'#58a6ff':'#3a4656'; ctx.lineWidth=(act?1.6:1)*dpr;
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(...P(k*Math.PI/3,R)); ctx.stroke();
+    const [lx,ly]=P(k*Math.PI/3, R+17*dpr);
+    ctx.fillStyle=act?'#e6edf3':'#8b97a7';
+    ctx.fillText(`U${k+1}`, lx, ly-6*dpr);
+    ctx.fillText(`(${SVBITS[k]})`, lx, ly+6*dpr);
+  }
+
+  // T1/T2 分解（头尾相接，和 = Uref）
+  const a0=S.sector*Math.PI/3, a1=a0+Math.PI/3;
+  const p1x=cx+Math.cos(a0)*S.T1*R, p1y=cy-Math.sin(a0)*S.T1*R;
+  const tipx=p1x+Math.cos(a1)*S.T2*R, tipy=p1y-Math.sin(a1)*S.T2*R;
+  ctx.lineWidth=2.5*dpr;
+  ctx.strokeStyle=cssVar('--alpha');
+  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(p1x,p1y); ctx.stroke();
+  ctx.strokeStyle=cssVar('--beta');
+  ctx.beginPath(); ctx.moveTo(p1x,p1y); ctx.lineTo(tipx,tipy); ctx.stroke();
+
+  // Uref 参考电压矢量（品红）
+  const scaleV=R/((2/3)*S.Vdc);
+  const Vmag=Math.hypot(S.valpha,S.vbeta), Vang=Math.atan2(S.vbeta,S.valpha);
+  const len=Math.min(Vmag*scaleV, R);
+  const ex=cx+Math.cos(Vang)*len, ey=cy-Math.sin(Vang)*len;
+  ctx.strokeStyle=cssVar('--stator'); ctx.fillStyle=cssVar('--stator'); ctx.lineWidth=3*dpr;
+  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(ex,ey); ctx.stroke();
+  const ha=Math.atan2(ey-cy,ex-cx), hl=9*dpr;
+  ctx.beginPath(); ctx.moveTo(ex,ey);
+  ctx.lineTo(ex-hl*Math.cos(ha-0.4), ey-hl*Math.sin(ha-0.4));
+  ctx.lineTo(ex-hl*Math.cos(ha+0.4), ey-hl*Math.sin(ha+0.4));
+  ctx.closePath(); ctx.fill();
+  ctx.fillText('Uref', ex+12*dpr*Math.cos(Vang), ey-12*dpr*Math.sin(Vang));
+
+  // 当前载波时刻实际输出的开关状态（黄点，在顶点/中心之间跳变）
+  const bits=(S.Sa?1:0)+''+(S.Sb?1:0)+''+(S.Sc?1:0);
+  const k=SVBITS.indexOf(bits);
+  const [mx2,my2] = k>=0 ? P(k*Math.PI/3,R) : [cx,cy];
+  ctx.fillStyle='#ffd34d';
+  ctx.beginPath(); ctx.arc(mx2,my2,5*dpr,0,7); ctx.fill();
+  ctx.strokeStyle='rgba(255,211,77,0.45)'; ctx.lineWidth=2*dpr;
+  ctx.beginPath(); ctx.arc(mx2,my2,8.5*dpr,0,7); ctx.stroke();
+
+  // 状态文字
+  ctx.textAlign='left'; ctx.font=`${11*dpr}px sans-serif`;
+  ctx.fillStyle='#8b97a7';
+  ctx.fillText(`扇区 ${S.sector+1}`, 8*dpr, 13*dpr);
+  ctx.fillStyle=S.m>1?'#ff5d5d':'#8b97a7';
+  ctx.fillText(`m = ${S.m.toFixed(2)}${S.m>1?' 过调制!':''}`, 8*dpr, 28*dpr);
+  ctx.fillStyle='#ffd34d';
+  ctx.fillText(`当前输出 ${bits} ${k>=0?'(U'+(k+1)+')':'(零矢量)'}`, 8*dpr, 43*dpr);
+
+  // 底部时间分配条 T1|T2|T0
+  const bx=10*dpr, bw=W-20*dpr, by=H-14*dpr, bh=7*dpr;
+  ctx.fillStyle='#1c2430'; ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle=cssVar('--alpha'); ctx.fillRect(bx,by,bw*S.T1,bh);
+  ctx.fillStyle=cssVar('--beta');  ctx.fillRect(bx+bw*S.T1,by,bw*S.T2,bh);
+  ctx.fillStyle='#5a6572'; ctx.font=`${9*dpr}px sans-serif`;
+  ctx.fillText('一个开关周期的时间分配  T1 | T2 | T0', bx, by-5*dpr);
+}
+
+/* ---- ⑥a 占空比历史（马鞍波） ---- */
+function drawDuty(){
+  const ctx=dutyCtx, cv=dutyCv, W=cv.width, H=cv.height, dpr=devicePixelRatio;
+  ctx.clearRect(0,0,W,H);
+  const y=d=>H*(0.94-0.88*d);
+  ctx.strokeStyle='#1c2430'; ctx.lineWidth=1*dpr;
+  [0,0.5,1].forEach(v=>{ ctx.beginPath(); ctx.moveTo(0,y(v)); ctx.lineTo(W,y(v)); ctx.stroke(); });
+  ctx.fillStyle='#5a6572'; ctx.font=`${9*dpr}px sans-serif`; ctx.textAlign='left';
+  ctx.fillText('100%', 3*dpr, y(1)+10*dpr);
+  ctx.fillText('50%',  3*dpr, y(0.5)-3*dpr);
+  const cols=[cssVar('--pa'),cssVar('--pb'),cssVar('--pc')], keys=['a','b','c'];
+  keys.forEach((kk,ki)=>{
+    ctx.strokeStyle=cols[ki]; ctx.lineWidth=1.6*dpr; ctx.beginPath();
+    for(let i=0;i<dutyHist.length;i++){
+      const x=(i/(WMAX-1))*W, yy=y(dutyHist[i][kk]);
+      i?ctx.lineTo(x,yy):ctx.moveTo(x,yy);
+    }
+    ctx.stroke();
+  });
+}
+
+/* ---- ⑥b 载波比较 → 门极信号（慢放一个开关周期） ---- */
+function drawPwm(){
+  const ctx=pwmCtx, cv=pwmCv, W=cv.width, H=cv.height, dpr=devicePixelRatio;
+  ctx.clearRect(0,0,W,H);
+  const padL=30*dpr, padR=16*dpr, plotW=W-padL-padR;
+  const X=t=>padL+t*plotW;
+  const carTop=10*dpr, carBot=H*0.44;
+  const Y=v=>carBot-(carBot-carTop)*v;
+  const duties=[{d:S.da,c:cssVar('--pa'),n:'a'},{d:S.db,c:cssVar('--pb'),n:'b'},{d:S.dc,c:cssVar('--pc'),n:'c'}];
+
+  // 分段边界（各相开/关时刻）+ 中间矢量状态标注
+  const bset=new Set([0,1]);
+  duties.forEach(o=>{ bset.add((1-o.d)/2); bset.add((1+o.d)/2); });
+  const bs=[...bset].sort((a,b)=>a-b);
+  ctx.strokeStyle='rgba(139,151,167,0.15)'; ctx.lineWidth=1*dpr;
+  bs.forEach(b=>{ ctx.beginPath(); ctx.moveTo(X(b),carTop); ctx.lineTo(X(b),H*0.97); ctx.stroke(); });
+
+  // 三角载波
+  ctx.strokeStyle='#8b97a7'; ctx.lineWidth=1.5*dpr;
+  ctx.beginPath(); ctx.moveTo(X(0),Y(1)); ctx.lineTo(X(0.5),Y(0)); ctx.lineTo(X(1),Y(1)); ctx.stroke();
+  ctx.fillStyle='#5a6572'; ctx.font=`${9*dpr}px sans-serif`;
+  ctx.textAlign='right';
+  ctx.fillText('1', padL-4*dpr, Y(1)+3*dpr);
+  ctx.fillText('0', padL-4*dpr, Y(0)+3*dpr);
+  ctx.textAlign='left';
+  ctx.fillText('三角载波', X(0.30), Y(0.96)+3*dpr);
+
+  // 占空比水平线
+  duties.forEach(o=>{
+    ctx.strokeStyle=o.c; ctx.lineWidth=1*dpr; ctx.setLineDash([4*dpr,3*dpr]);
+    ctx.beginPath(); ctx.moveTo(X(0),Y(o.d)); ctx.lineTo(X(1),Y(o.d)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle=o.c;
+    ctx.fillText('d'+o.n, X(1)+3*dpr, Y(o.d)+3*dpr);
+  });
+
+  // 每段的开关状态 SaSbSc（000/111 为零矢量，灰显）
+  ctx.font=`${8.5*dpr}px Consolas,monospace`; ctx.textAlign='center';
+  const labY=H*0.485;
+  for(let i=0;i<bs.length-1;i++){
+    if((bs[i+1]-bs[i])*plotW < 18*dpr) continue;
+    const mid=(bs[i]+bs[i+1])/2, tri=Math.abs(1-2*mid);
+    const bits=duties.map(o=>o.d>tri?'1':'0').join('');
+    ctx.fillStyle=(bits==='000'||bits==='111')?'#5a6572':'#e6edf3';
+    ctx.fillText(bits, X(mid), labY);
+  }
+
+  // 三路门极方波：tri < d 的区间为高电平（中心对齐脉冲）
+  const rowTop=H*0.52, rowH=(H*0.97-rowTop)/3;
+  ctx.font=`${9*dpr}px sans-serif`;
+  duties.forEach((o,i)=>{
+    const yLo=rowTop+i*rowH+rowH*0.74, yHi=rowTop+i*rowH+rowH*0.16;
+    const t0=(1-o.d)/2, t1=(1+o.d)/2;
+    ctx.strokeStyle=o.c; ctx.lineWidth=1.8*dpr;
+    ctx.beginPath();
+    ctx.moveTo(X(0),yLo); ctx.lineTo(X(t0),yLo); ctx.lineTo(X(t0),yHi);
+    ctx.lineTo(X(t1),yHi); ctx.lineTo(X(t1),yLo); ctx.lineTo(X(1),yLo);
+    ctx.stroke();
+    ctx.fillStyle=o.c; ctx.textAlign='right';
+    ctx.fillText('S'+o.n.toUpperCase(), padL-4*dpr, (yLo+yHi)/2+3*dpr);
+    ctx.textAlign='left';
+  });
+
+  // 当前时刻光标（与 ⑤ 黄点、⑦ 开关状态联动）
+  const cxr=X(S.carrierPhase);
+  ctx.strokeStyle='#ffd34d'; ctx.lineWidth=1.5*dpr;
+  ctx.beginPath(); ctx.moveTo(cxr,carTop); ctx.lineTo(cxr,H*0.97); ctx.stroke();
+  const triNow=Math.abs(1-2*S.carrierPhase);
+  ctx.fillStyle='#ffd34d';
+  ctx.beginPath(); ctx.arc(cxr,Y(triNow),3.5*dpr,0,7); ctx.fill();
+}
+
+/* ---- ⑦ 三相逆变桥 ---- */
+function drawBridge(){
+  const ctx=brCtx, cv=brCv, W=cv.width, H=cv.height, dpr=devicePixelRatio;
+  ctx.clearRect(0,0,W,H);
+  const topY=H*0.13, botY=H*0.87, midY=(topY+botY)/2;
+  const legX=[W*0.28, W*0.44, W*0.60], busX=W*0.10;
+  const mx=W*0.86, my=midY, mr=Math.min(H*0.16, W*0.07);
+  const cols=[cssVar('--pa'),cssVar('--pb'),cssVar('--pc')];
+  const sw=[S.Sa,S.Sb,S.Sc], cur=[S.ia,S.ib,S.ic], names=['U','V','W'];
+  // a 相绕行上方、b 相绕行下方、c 相直行，避免相互交叠
+  const wireY=[midY-16*dpr, midY+16*dpr, midY];
+
+  // 直流母线 + 电池符号
+  ctx.strokeStyle='#4a5563'; ctx.lineWidth=1.5*dpr;
+  ctx.beginPath(); ctx.moveTo(busX,topY); ctx.lineTo(legX[2],topY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(busX,botY); ctx.lineTo(legX[2],botY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(busX,topY); ctx.lineTo(busX,midY-6*dpr); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(busX,midY+6*dpr); ctx.lineTo(busX,botY); ctx.stroke();
+  ctx.lineWidth=2*dpr;
+  ctx.beginPath(); ctx.moveTo(busX-10*dpr,midY-6*dpr); ctx.lineTo(busX+10*dpr,midY-6*dpr); ctx.stroke();
+  ctx.lineWidth=4*dpr;
+  ctx.beginPath(); ctx.moveTo(busX-5*dpr,midY+6*dpr); ctx.lineTo(busX+5*dpr,midY+6*dpr); ctx.stroke();
+  ctx.fillStyle='#e6edf3'; ctx.font=`${10*dpr}px sans-serif`;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('+', busX+12*dpr, topY+10*dpr);
+  ctx.fillText('−', busX+12*dpr, botY-10*dpr);
+  ctx.fillStyle='#8b97a7';
+  ctx.fillText(`Vdc=${S.Vdc}V`, busX+22*dpr, midY-26*dpr);
+
+  // 相输出线（先画；桥臂随后带底色描边盖上，形成“从后面穿过”的效果）
+  for(let i=0;i<3;i++){
+    const dy=wireY[i]-my;
+    const xEnd=mx-Math.sqrt(Math.max(0, mr*mr-dy*dy));
+    ctx.strokeStyle=cols[i]; ctx.lineWidth=1.6*dpr; ctx.globalAlpha=0.9;
+    ctx.beginPath();
+    ctx.moveTo(legX[i],midY);
+    ctx.lineTo(legX[i]+10*dpr,midY);
+    ctx.lineTo(legX[i]+10*dpr,wireY[i]);
+    ctx.lineTo(xEnd,wireY[i]);
+    ctx.stroke(); ctx.globalAlpha=1;
+    // 相名
+    ctx.fillStyle=cols[i]; ctx.font=`${8*dpr}px sans-serif`; ctx.textAlign='left';
+    ctx.fillText(names[i], legX[2]+16*dpr, wireY[i]-6*dpr);
+    // 电流方向箭头（>0 流向电机）
+    const I=cur[i];
+    if(Math.abs(I)>0.05){
+      const dirR=I>0, ax=W*0.72, ay=wireY[i], s=5*dpr;
+      ctx.fillStyle=cols[i]; ctx.globalAlpha=0.3+Math.min(0.7,Math.abs(I)*0.25);
+      ctx.beginPath();
+      if(dirR){ ctx.moveTo(ax+s,ay); ctx.lineTo(ax-s,ay-s*0.8); ctx.lineTo(ax-s,ay+s*0.8); }
+      else    { ctx.moveTo(ax-s,ay); ctx.lineTo(ax+s,ay-s*0.8); ctx.lineTo(ax+s,ay+s*0.8); }
+      ctx.closePath(); ctx.fill(); ctx.globalAlpha=1;
+    }
+  }
+
+  // 三个桥臂 + 上下开关
+  const upC=(topY+midY)/2, loC=(midY+botY)/2;
+  function swBox(x,yc,on,col,label){
+    const w=20*dpr, h=24*dpr;
+    ctx.fillStyle=on?col:'#1a2028';
+    ctx.fillRect(x-w/2,yc-h/2,w,h);
+    ctx.strokeStyle=on?col:'#3a4656'; ctx.lineWidth=1.2*dpr;
+    ctx.strokeRect(x-w/2,yc-h/2,w,h);
+    ctx.fillStyle=on?'#0d1117':'#8b97a7';
+    ctx.font=`bold ${9*dpr}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(label,x,yc+0.5*dpr);
+  }
+  for(let i=0;i<3;i++){
+    // 底色描边让横穿的相线看起来在桥臂后面
+    ctx.strokeStyle='#0a0e14'; ctx.lineWidth=6*dpr;
+    ctx.beginPath(); ctx.moveTo(legX[i],topY+5*dpr); ctx.lineTo(legX[i],botY-5*dpr); ctx.stroke();
+    ctx.strokeStyle='#4a5563'; ctx.lineWidth=1.5*dpr;
+    ctx.beginPath(); ctx.moveTo(legX[i],topY); ctx.lineTo(legX[i],botY); ctx.stroke();
+    swBox(legX[i],upC, sw[i], cols[i], 'ABC'[i]+'+');
+    swBox(legX[i],loC, !sw[i], cols[i], 'ABC'[i]+'−');
+    ctx.fillStyle=cols[i];
+    ctx.beginPath(); ctx.arc(legX[i],midY,3*dpr,0,7); ctx.fill();
+  }
+
+  // 电机
+  ctx.fillStyle='#141a22'; ctx.strokeStyle='#8b97a7'; ctx.lineWidth=1.5*dpr;
+  ctx.beginPath(); ctx.arc(mx,my,mr,0,7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#e6edf3'; ctx.font=`bold ${13*dpr}px sans-serif`; ctx.textAlign='center';
+  ctx.fillText('M', mx, my-4*dpr);
+  ctx.fillStyle='#8b97a7'; ctx.font=`${8*dpr}px sans-serif`;
+  ctx.fillText('3~', mx, my+8*dpr);
+}
+
+/* =========================================================================
    3. UI 绑定
    ========================================================================= */
 const $=id=>document.getElementById(id);
@@ -805,6 +1191,8 @@ function bind(slider,val,fmt,key,mul=1){
 bind('sSpeed','vSpeed',v=>`${v} rpm`,'speedRef');
 bind('sLoad','vLoad',v=>`${v.toFixed(2)} N·m`,'loadTorque');
 bind('sId','vId',v=>`${v.toFixed(1)} A`,'idRef');
+bind('sVdc','vVdc',v=>`${v} V`,'Vdc');
+bind('sCarT','vCarT',v=>`${v} s`,'carrierT');
 
 $('sP').addEventListener('input',e=>{
   S.polePairs=parseInt(e.target.value);
@@ -1029,6 +1417,20 @@ function updateHUD(){
   $('kIb').textContent=S.ibeta.toFixed(2);
   $('kId').textContent=S.id.toFixed(2);
   $('kIq').textContent=S.iq.toFixed(2);
+
+  // PWM / SVPWM
+  $('pVd').textContent=S.vd.toFixed(1);
+  $('pVq').textContent=S.vq.toFixed(1);
+  $('pVa2').textContent=S.valpha.toFixed(1);
+  $('pVb2').textContent=S.vbeta.toFixed(1);
+  $('pDa').textContent=(S.da*100).toFixed(0);
+  $('pDb').textContent=(S.db*100).toFixed(0);
+  $('pDc').textContent=(S.dc*100).toFixed(0);
+  $('pSec').textContent=S.sector+1;
+  $('kSec').textContent=`${S.sector+1} / m=${S.m.toFixed(2)}${S.m>1?' ⚠过调制':''}`;
+  $('kT1').textContent=(S.T1*100).toFixed(1)+' %';
+  $('kT2').textContent=(S.T2*100).toFixed(1)+' %';
+  $('kT0').textContent=(S.T0*100).toFixed(1)+' %';
 }
 
 /* =========================================================================
@@ -1041,13 +1443,18 @@ function loop(now){
   if(!S.paused){
     // 用较小子步保证仿真稳定
     const sub=6, h=dtReal/sub;
-    for(let i=0;i<sub;i++) step(h);
+    for(let i=0;i<sub;i++){ step(h); computePWM(h); }
   }
   update3D();
   updateHUD();
 
-  if(!waveSetup){ setupCanvas(waveCv); setupCanvas(vecCv); waveSetup=true; }
+  if(!waveSetup){
+    setupCanvas(waveCv); setupCanvas(vecCv);
+    setupCanvas(hexCv); setupCanvas(dutyCv); setupCanvas(pwmCv); setupCanvas(brCv);
+    waveSetup=true;
+  }
   drawWave(); drawVec();
+  drawHex(); drawDuty(); drawPwm(); drawBridge();
 
   controls.update();
   renderer.render(scene,camera);
@@ -1058,6 +1465,7 @@ function loop(now){
 function initSizes(){
   resize3D();
   setupCanvas(waveCv); setupCanvas(vecCv);
+  setupCanvas(hexCv); setupCanvas(dutyCv); setupCanvas(pwmCv); setupCanvas(brCv);
 }
 window.addEventListener('resize',()=>{ initSizes(); });
 // 等布局完成
