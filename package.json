@@ -1,0 +1,11 @@
+{
+  "name": "foc-visualizer",
+  "version": "1.2.0",
+  "description": "FOC 磁场定向控制交互式可视化：开关级 PMSM 仿真 + 3D 电机模型 + 磁场剖面",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "serve": "python tools/serve.py 8137"
+  }
+}
